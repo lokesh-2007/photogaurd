@@ -1,0 +1,6 @@
+{
+  "name": "PhotoGuard Lite",
+  "description": "In-memory adversarial image immunization against unauthorized generative AI editing and deepfakes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
