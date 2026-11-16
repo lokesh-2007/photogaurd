@@ -14,22 +14,25 @@ import time
 from contextlib import asynccontextmanager
 
 import torch
-from diffusers import AutoencoderKL, AutoencoderTiny
+from diffusers import AutoencoderKL, AutoencoderTiny, DDPMScheduler, UNet2DConditionModel
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
+from transformers import CLIPTextModel, CLIPTokenizer
 
-from photoguard_engine import protect_image_stream_v2
+from photoguard_engine import DEFAULT_TARGET_PROMPT, protect_image_stream_v2
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png"}
 MAX_LONG_EDGE = 1024
-DEFAULT_VAE_MODEL_ID = os.getenv("PHOTOGUARD_VAE_ID", "stabilityai/stable-diffusion-2-1")
+DEFAULT_MODEL_ID = os.getenv("PHOTOGUARD_MODEL_ID", os.getenv("PHOTOGUARD_VAE_ID", "stabilityai/stable-diffusion-2-1"))
+ENABLE_UNET = os.getenv("PHOTOGUARD_ENABLE_UNET", "1") != "0"
 
 model_registry: dict = {
     "vae": None,
     "unet": None,
     "scheduler": None,
+    "text_embeddings": None,
     "device": "cpu",
     "dtype": torch.float32,
 }
@@ -37,7 +40,7 @@ model_registry: dict = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load VAE encoder once at startup in half-precision (torch.float16) when supported."""
+    """Load VAE encoder + UNet cross-attention stack once at startup in FP16 when supported."""
     if torch.cuda.is_available():
         device = "cuda"
         dtype = torch.float16
@@ -48,12 +51,12 @@ async def lifespan(app: FastAPI):
         device = "cpu"
         dtype = torch.float32
 
-    vae_id = DEFAULT_VAE_MODEL_ID
+    model_id = DEFAULT_MODEL_ID
     try:
-        if "taesd" in vae_id.lower():
-            vae = AutoencoderTiny.from_pretrained(vae_id, torch_dtype=dtype)
+        if "taesd" in model_id.lower():
+            vae = AutoencoderTiny.from_pretrained(model_id, torch_dtype=dtype)
         else:
-            vae = AutoencoderKL.from_pretrained(vae_id, subfolder="vae", torch_dtype=dtype)
+            vae = AutoencoderKL.from_pretrained(model_id, subfolder="vae", torch_dtype=dtype)
     except Exception:
         # Lightweight TAESD fallback if full SD 2.1 VAE cannot be fetched
         vae = AutoencoderTiny.from_pretrained("madebyollin/taesd", torch_dtype=dtype)
@@ -62,7 +65,43 @@ async def lifespan(app: FastAPI):
     for param in vae.parameters():
         param.requires_grad_(False)
 
+    unet = None
+    scheduler = None
+    text_embeddings = None
+
+    if ENABLE_UNET and "taesd" not in model_id.lower():
+        try:
+            unet = UNet2DConditionModel.from_pretrained(model_id, subfolder="unet", torch_dtype=dtype)
+            unet = unet.to(device).eval()
+            for param in unet.parameters():
+                param.requires_grad_(False)
+
+            scheduler = DDPMScheduler.from_pretrained(model_id, subfolder="scheduler")
+
+            # Compute semantic prompt embeddings once and free text encoder immediately to save VRAM
+            tokenizer = CLIPTokenizer.from_pretrained(model_id, subfolder="tokenizer")
+            text_encoder = CLIPTextModel.from_pretrained(model_id, subfolder="text_encoder", torch_dtype=dtype).to(device)
+            tokens = tokenizer(
+                DEFAULT_TARGET_PROMPT,
+                padding="max_length",
+                max_length=tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            with torch.no_grad():
+                text_embeddings = text_encoder(tokens.input_ids.to(device))[0].detach()
+            del text_encoder, tokenizer
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            unet = None
+            scheduler = None
+            text_embeddings = None
+
     model_registry["vae"] = vae
+    model_registry["unet"] = unet
+    model_registry["scheduler"] = scheduler
+    model_registry["text_embeddings"] = text_embeddings
     model_registry["device"] = device
     model_registry["dtype"] = dtype
 
@@ -71,6 +110,7 @@ async def lifespan(app: FastAPI):
     model_registry["vae"] = None
     model_registry["unet"] = None
     model_registry["scheduler"] = None
+    model_registry["text_embeddings"] = None
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -139,6 +179,7 @@ async def health():
         "status": "ok" if model_registry["vae"] is not None else "initializing",
         "device": model_registry["device"],
         "dtype": str(model_registry["dtype"]),
+        "cross_attention_disruption": model_registry["unet"] is not None,
         "zero_retention": True,
     }
 
@@ -174,6 +215,7 @@ async def protect_image(
             unet_model=model_registry.get("unet"),
             scheduler=model_registry.get("scheduler"),
             epsilon_val=bounded_epsilon,
+            text_embeddings=model_registry.get("text_embeddings"),
         )
 
         # Guarantee lossless 32-bit RGBA PNG stream
