@@ -260,6 +260,9 @@ export async function immunizeImage(
     percent: 100,
   });
 
+  const dynamicEpsilon255 = Math.max(2, Math.min(10, options.epsilon255));
+  const dynamicEpsilon = Number((dynamicEpsilon255 / 255).toFixed(4));
+
   return {
     originalUrl: source.previewUrl,
     protectedUrl,
@@ -272,8 +275,8 @@ export async function immunizeImage(
       processingTimeMs,
       width: source.width,
       height: source.height,
-      epsilon: preset.epsilon,
-      epsilon255: preset.epsilon255,
+      epsilon: dynamicEpsilon,
+      epsilon255: dynamicEpsilon255,
       steps: preset.steps,
       eotEnabled: options.enableEot,
       psnrDb,
@@ -305,12 +308,15 @@ async function immunizeViaFastApi(
     percent: 25,
   });
 
+  const dynamicEpsilon255 = Math.max(2, Math.min(10, options.epsilon255));
+  const dynamicEpsilon = Number((dynamicEpsilon255 / 255).toFixed(4));
+
   const rawInputPng = await imageDataToLosslessPngBlob(source.imageData);
   const inputBlob = await ensureStrictPngBlob(rawInputPng);
   const formData = new FormData();
   formData.append('file', inputBlob, buildPngSourceFilename(source.fileName));
   formData.append('strength', options.strength);
-  formData.append('epsilon', String(preset.epsilon));
+  formData.append('epsilon', String(dynamicEpsilon255 / 255));
   formData.append('steps', String(preset.steps));
   formData.append('enable_eot', String(options.enableEot));
 
@@ -375,8 +381,8 @@ async function immunizeViaFastApi(
       processingTimeMs: Number.isFinite(headerTime) && headerTime > 0 ? headerTime : Math.round(performance.now() - startTime),
       width: source.width,
       height: source.height,
-      epsilon: preset.epsilon,
-      epsilon255: preset.epsilon255,
+      epsilon: dynamicEpsilon,
+      epsilon255: dynamicEpsilon255,
       steps: preset.steps,
       eotEnabled: options.enableEot,
       psnrDb: Number.isFinite(headerPsnr) && headerPsnr > 0 ? headerPsnr : computed.psnrDb,

@@ -15,8 +15,8 @@ export const PRESET_CONFIGS: Record<ProtectionStrength, PresetConfig> = {
     id: 'light',
     label: 'Light',
     tag: 'Fast',
-    epsilon: 0.03,
-    epsilon255: 8,
+    epsilon: 4 / 255,
+    epsilon255: 4,
     steps: 15,
     description: 'Low-latency L∞ perturbation preserving near-identical pixel fidelity.',
   },
@@ -24,8 +24,8 @@ export const PRESET_CONFIGS: Record<ProtectionStrength, PresetConfig> = {
     id: 'balanced',
     label: 'Balanced',
     tag: 'Recommended',
-    epsilon: 0.05,
-    epsilon255: 13,
+    epsilon: 6 / 255,
+    epsilon255: 6,
     steps: 20,
     description: 'Optimal trade-off between diffusion encoder disruption and visual invisibility.',
   },
@@ -33,10 +33,10 @@ export const PRESET_CONFIGS: Record<ProtectionStrength, PresetConfig> = {
     id: 'maximum',
     label: 'Maximum',
     tag: 'Strongest',
-    epsilon: 0.08,
-    epsilon255: 20,
+    epsilon: 8 / 255,
+    epsilon255: 8,
     steps: 25,
-    description: 'Aggressive L∞ budget hardened against aggressive generative inpainting.',
+    description: 'Aggressive L∞ budget hardened against robust generative inpainting.',
   },
 };
 
@@ -55,6 +55,7 @@ export interface PreprocessedImage {
 
 export interface ProtectionOptions {
   strength: ProtectionStrength;
+  epsilon255: number; // Fine-grained Noise Intensity budget in [2, 10] (/255)
   enableEot: boolean;
   highDpiMode: boolean;
 }

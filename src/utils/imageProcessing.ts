@@ -336,7 +336,7 @@ export async function runClientAdversarialPerturbation(
   const preset = PRESET_CONFIGS[options.strength];
   const { width, height, data: origData } = sourceImageData;
   const numPixels = width * height;
-  const eps255 = preset.epsilon * 255.0;
+  const eps255 = Math.max(2, Math.min(10, options.epsilon255));
   const steps = preset.steps;
   const stepAlpha = (eps255 / steps) * 1.25;
 
@@ -360,9 +360,8 @@ export async function runClientAdversarialPerturbation(
   const deltaB = new Float32Array(numPixels);
   const localMaxBounds = new Float32Array(numPixels);
 
-  // Flat white-paper micro-perturbation ceiling (imperceptible: ±1 to ±2.4 levels max)
-  const paperFloorEps =
-    options.strength === 'light' ? 1.0 : options.strength === 'balanced' ? 1.6 : 2.4;
+  // Dynamic white-paper micro-perturbation ceiling scaled smoothly with Noise Intensity (2/255-10/255)
+  const paperFloorEps = Math.min(2.6, Math.max(0.8, eps255 * 0.28));
 
   for (let i = 0; i < numPixels; i++) {
     const tex = textureMask[i];
@@ -371,7 +370,7 @@ export async function runClientAdversarialPerturbation(
       tex === 0.0
         ? paperFloorEps
         : sharp > 0.2
-        ? Math.min(eps255 * 0.28, 3.5)
+        ? Math.min(eps255 * 0.38, 3.6)
         : paperFloorEps + (eps255 - paperFloorEps) * tex;
   }
 

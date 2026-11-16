@@ -31,6 +31,7 @@ export default function App() {
   const [result, setResult] = useState<ProtectionResult | null>(null);
   const [options, setOptions] = useState<ProtectionOptions>({
     strength: 'balanced',
+    epsilon255: 6,
     enableEot: true,
     highDpiMode: true,
   });
